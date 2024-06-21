@@ -1,3 +1,4 @@
+
 import sys
 import os
 import csv
@@ -11,6 +12,7 @@ import hashlib
 import time
 import string
 import random
+
 
 # Load exercise configuration from a JSON file
 EXERCISE_CONFIG = {
@@ -436,6 +438,7 @@ EXERCISE_CONFIG = {
     }
   }
 
+
 # UUIDs and other data
 UART_SERVICE_UUIDS = [
     ("Sense Right Hand", "8E400004-B5A3-F393-E0A9-E50E24DCCA9E", "8E400006-B5A3-F393-E0A9-E50E24DCCA9E"),
@@ -602,8 +605,14 @@ class StartPage(QWizardPage):
         layout.addWidget(self.date_input)
         self.setLayout(layout)
 
+        # Register the fields
+        self.registerField("school_name_input*", self.school_name_input)
+        self.registerField("date_input", self.date_input)
+
     def initializePage(self):
+        print(get_saved_school_name())
         self.school_name_input.setText(get_saved_school_name())
+        print(get_saved_date())
         self.date_input.setDate(get_saved_date())
 
     def validatePage(self):
@@ -618,203 +627,161 @@ def save_school_name(name):
 def get_saved_school_name():
     try:
         with open('school_name.txt', 'r') as f:
-            return f.read().strip()
+            return f.read()
     except FileNotFoundError:
         return ""
 
 def save_date(date):
     with open('date.txt', 'w') as f:
-        f.write(date.toString("yyyyMMdd"))
+        f.write(date.toString('dd/MM/yyyy'))
 
 def get_saved_date():
     try:
         with open('date.txt', 'r') as f:
-            date_str = f.read().strip()
-            return QDate.fromString(date_str, "yyyyMMdd")
+            date_str = f.read()
+            return QDate.fromString(date_str, 'dd/MM/yyyy')
     except FileNotFoundError:
         return QDate.currentDate()
 
-class MainPage(QWizardPage):
+class ExerciseSelectionPage(QWizardPage):
     def __init__(self, parent=None):
-        super(MainPage, self).__init__(parent)
-        self.setTitle("Main Page")
-        self.initUI()
+        super(ExerciseSelectionPage, self).__init__(parent)
+        self.setTitle("Exercise Selection Page")
+        layout = QVBoxLayout()
+        self.exercise_combo = QComboBox()
+        self.exercise_combo.addItems(EXERCISE_CONFIG.keys())
+        layout.addWidget(QLabel("Select an Exercise:"))
+        layout.addWidget(self.exercise_combo)
+        self.setLayout(layout)
 
-    def initUI(self):
-        self.layout = QVBoxLayout()
-        self.setFixedSize(500, 500)
-
-        self.name_label = QLabel("Name:")
-        self.name_input = QLineEdit()
-        self.layout.addWidget(self.name_label)
-        self.layout.addWidget(self.name_input)
-
-        self.grade_label = QLabel("Grade:")
-        self.grade_input = QLineEdit()
-        self.layout.addWidget(self.grade_label)
-        self.layout.addWidget(self.grade_input)
-
-        self.height_label = QLabel("Height:")
-        self.height_input = QLineEdit()
-        self.layout.addWidget(self.height_label)
-        self.layout.addWidget(self.height_input)
-
-        self.gender_label = QLabel("Gender:")
-        self.gender_dropdown = QComboBox()
-        self.gender_dropdown.addItems(["Male", "Female"])
-        self.layout.addWidget(self.gender_label)
-        self.layout.addWidget(self.gender_dropdown)
-
-        self.exercise_name_label = QLabel("Exercise Name:")
-        self.exercise_name_dropdown = QComboBox()
-        self.exercise_name_dropdown.addItems(list(EXERCISE_CONFIG.keys()))
-        self.layout.addWidget(self.exercise_name_label)
-        self.layout.addWidget(self.exercise_name_dropdown)
-
-        self.status_label = QLabel("")
-        self.layout.addWidget(self.status_label)
-        self.timer_label = QLabel("Elapsed Time: 0s")
-        self.layout.addWidget(self.timer_label)
-        self.start_button = QPushButton('Start Exercise', self)
-        self.start_button.clicked.connect(self.startExercise)
-        self.layout.addWidget(self.start_button)
-        self.stop_button = QPushButton('Stop Exercise', self)
-        self.stop_button.clicked.connect(self.stopExercise)
-        self.stop_button.setEnabled(False)
-        self.layout.addWidget(self.stop_button)
-        self.setLayout(self.layout)
-        self.timer = QTimer(self)
-        self.elapsed_time = 0
-        self.timer.timeout.connect(self.update_timer)
-        self.async_runner = AsyncRunner()
-        self.async_runner.updateStatus.connect(self.setStatus)
-        self.async_runner.sensorsConnected.connect(self.start_timer)
-
-    def toggle_timer_label(self, show):
-        self.timer_label.setVisible(show)
-
-    def setStatus(self, status):
-        self.status_label.setText(status)
-
-    def startExercise(self):
-        global csv_filename, start_times, selected_exercise_config
-
-        exercise_name = self.exercise_name_dropdown.currentText()
+    def validatePage(self):
+        global selected_exercise_config
+        exercise_name = self.exercise_combo.currentText()
         selected_exercise_config = EXERCISE_CONFIG[exercise_name]
-        start_times = {i: None for i in selected_exercise_config["sensors"]}
+        return True
 
-        self.start_timer()
-        self.toggle_timer_label(True)
+class SensorConnectionPage(QWizardPage):
+    def __init__(self, parent=None):
+        super(SensorConnectionPage, self).__init__(parent)
+        self.setTitle("Sensor Connection Page")
+        layout = QVBoxLayout()
+        self.status_label = QLabel("Status: Not connected")
+        self.connect_button = QPushButton("Connect to Sensors")
+        self.connect_button.clicked.connect(self.start_connection)
+        layout.addWidget(self.status_label)
+        layout.addWidget(self.connect_button)
+        self.setLayout(layout)
+        self.async_runner = AsyncRunner()
+        self.async_runner.updateStatus.connect(self.update_status)
+        self.async_runner.sensorsConnected.connect(self.on_sensors_connected)
 
-        school_name = get_saved_school_name()
-        date_selected = get_saved_date().toString("ddMMyyyy")
-        grade = self.grade_input.text()
+    def start_connection(self):
+        self.async_runner.start()
 
-        # Generate a unique hashed ID for the CSV file
-        hash_info = f"{school_name}_{date_selected}_{grade}_{exercise_name}"
-        hashed_id = generate_hashed_id(hash_info)
+    def stop_connection(self):
+        self.async_runner.stop()
 
-        os.makedirs("./data", exist_ok=True)
-        csv_filename = f"./data/{hashed_id}.csv"
+    def update_status(self, status):
+        self.status_label.setText(f"Status: {status}")
+
+    def on_sensors_connected(self):
+        self.wizard().next()
+
+class ExercisePage(QWizardPage):
+    def __init__(self, parent=None):
+        super(ExercisePage, self).__init__(parent)
+        self.setTitle("Exercise Page")
+        layout = QVBoxLayout()
+        self.name_input = QLineEdit()
+        self.height_input = QLineEdit()
+        self.gender_input = QLineEdit()
+        self.weight_input = QLineEdit()
+        self.start_button = QPushButton("Start Exercise")
+        self.stop_button = QPushButton("Stop Exercise")
+        self.start_button.clicked.connect(self.start_exercise)
+        self.stop_button.clicked.connect(self.stop_exercise)
+        self.status_label = QLabel("Status: Waiting to start")
+        layout.addWidget(QLabel("Student Name:"))
+        layout.addWidget(self.name_input)
+        layout.addWidget(QLabel("Height (cm):"))
+        layout.addWidget(self.height_input)
+        layout.addWidget(QLabel("Gender:"))
+        layout.addWidget(self.gender_input)
+        layout.addWidget(QLabel("Weight (kg):"))
+        layout.addWidget(self.weight_input)
+        layout.addWidget(self.start_button)
+        layout.addWidget(self.stop_button)
+        layout.addWidget(self.status_label)
+        self.setLayout(layout)
+        print(self.ex().field("StartPage.school_name_input"))
+
+    def validatePage(self):
+        global student_info
+        student_info = {
+            "name": self.name_input.text(),
+            "height": self.height_input.text(),
+            "gender": self.gender_input.text(),
+            "weight": self.weight_input.text()
+        }
+        return True
+
+    def start_exercise(self):
+        global csv_filename
+        school_name = self.ex().field("StartPage.school_name_input")
+        print(school_name)
+        date = self.ex().field("StartPage.date_input")
+        print(date)
+        date_str = date.toString('ddMMyyyy')
+        exercise_name = self.ex().field("ExerciseSelectionPage.exercise_combo")
+        csv_filename = f"{school_name}_{date_str}_{exercise_name}.csv"
         with open(csv_filename, 'w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(selected_exercise_config["columns"])
+        self.status_label.setText("Status: Exercise started")
 
-        # Prepare record to later append to the exercise log
-        global exercise_record
-        exercise_record = {
+    def stop_exercise(self):
+        global STOP_FLAG, student_info
+        STOP_FLAG = True
+        self.status_label.setText("Status: Exercise stopped")
+
+        school_name = self.ex().field("StartPage.school_name")
+        date = self.ex().field("StartPage.date").toString('dd/MM/yyyy')
+        exercise_name = self.ex().field("ExerciseSelectionPage.exercise_combo")
+
+        record = {
+            "student_id": generate_hashed_id(student_info["name"]),
+            "student_name": student_info["name"],
+            "height": student_info["height"],
+            "gender": student_info["gender"],
+            "weight": student_info["weight"],
             "school_name": school_name,
-            "date": date_selected,
-            "name": self.name_input.text(),
-            "grade": grade,
-            "height": self.height_input.text(),
-            "gender": self.gender_dropdown.currentText(),
+            "date": date,
             "exercise_name": exercise_name,
-            "file_id": hashed_id,
-            "label": None  # Initially, label is None
+            "csv_filename": csv_filename
         }
 
-        self.start_button.setEnabled(False)
-        self.stop_button.setEnabled(True)
-        self.async_runner.start()
-
-    def stopExercise(self):
-        self.async_runner.stop()
-        self.async_runner.wait()
-        self.timer.stop()  # Ensure the timer stops here
-        exercise_name = self.exercise_name_dropdown.currentText()
-
-        msgBox = QMessageBox(self)
-        msgBox.setIcon(QMessageBox.Question)
-        msgBox.setText("Do you want to keep the data?")
-        msgBox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        yesButton = msgBox.button(QMessageBox.Yes)
-        msgBox.setDefaultButton(yesButton)
-        retval = msgBox.exec()
-
-        if retval == QMessageBox.Yes:
-            label, ok = QInputDialog.getItem(
-                self, 'Input Dialog', 'Enter a label for the data:', ["Good", "Idle", "Anomaly"], 0, False
-            )
-            if ok:
-                global csv_filename, exercise_record
-                exercise_record["label"] = label  # Update the label in the record
-                base, ext = os.path.splitext(csv_filename)
-                new_filename = f"{base}_{exercise_name}{ext}"
-                os.rename(csv_filename, new_filename)
-
-                # Append the record with the label to the exercise log
-                append_to_exercise_record(exercise_record["date"], exercise_record)
-
-                self.setStatus(f"Data labeled as {label} and saved to {new_filename}")
-            else:
-                self.setStatus("Label input canceled")
-        else:
-            os.remove(csv_filename)
-            self.setStatus("Data discarded")
-
-        self.elapsed_time = 0
-        self.timer_label.setText("Elapsed Time: 0s")
-        self.toggle_timer_label(False)
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        self.timer.stop()  # Ensure the timer stops here too
-
-    def start_timer(self):
-        self.elapsed_time = 0
-        self.timer.start(1000)
-        self.setStatus("Connected to sensors. Tracking exercises now.")
-
-    def update_timer(self):
-        self.elapsed_time += 1
-        self.timer_label.setText(f"Elapsed Time: {self.elapsed_time}s")
-        if self.elapsed_time >= 6:
-            self.setStatus("Tracking exercises now...")
-
+        append_to_exercise_record(date, record)
+        gui_updater.showMessageSignal.emit("Exercise data has been saved.")
 
 class ExerciseApp(QWizard):
-    def __init__(self):
-        super().__init__()
-        self.addPage(StartPage())
-        self.addPage(MainPage())
-        self.addPage(FinishPage())
-        self.setWindowTitle("Exercise App")
-    
-    def stopExercise(self):
-        self.findChild(MainPage).stopExercise()
-
-class FinishPage(QWizardPage):
     def __init__(self, parent=None):
-        super(FinishPage, self).__init__(parent)
-        self.setTitle("Finish Page")
-        layout = QVBoxLayout()
-        self.setFixedSize(500, 400)
-        self.finish_label = QLabel("Exercise data collection finished!")
-        layout.addWidget(self.finish_label)
-        self.setLayout(layout)
+        super(ExerciseApp, self).__init__(parent)
+        self.setWizardStyle(QWizard.ModernStyle)
+        self.setFixedSize(600, 500)
+
+        self.start_page = StartPage(self)
+        self.exercise_selection_page = ExerciseSelectionPage(self)
+        self.sensor_connection_page = SensorConnectionPage(self)
+        self.exercise_page = ExercisePage(self)
+
+        self.addPage(self.start_page)
+        self.addPage(self.exercise_selection_page)
+        self.addPage(self.sensor_connection_page)
+        self.addPage(self.exercise_page)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ex = ExerciseApp()
+    ex.setWindowTitle("Exercise Wizard")
     ex.show()
     sys.exit(app.exec_())
